@@ -3,15 +3,19 @@ import os
 import re
 from datetime import datetime
 
+# 설정
 TARGET_REPO = "GENEXIS-AI/DailyNews"
 API_URL = f"https://api.github.com/repos/{TARGET_REPO}/contents/%EB%89%B4%EC%8A%A4%EB%A0%88%ED%84%B0"
 WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
-def parse_news_content(text):
-    # 1. 기사 단위로 분리 (#### 제목 형태 찾기)
-    # 제목과 그 뒤에 따라오는 첫 번째 URL을 추출합니다.
-    items = re.findall(r'#### (.*?)\n.*?((?:http|https)://[^\s\)]+)', text, re.DOTALL)
-    return items
+def parse_articles(text):
+    """
+    마크다운 본문에서 #### [제목] 과 [원문 링크](URL) 패턴을 찾아 리스트로 반환합니다.
+    """
+    # 패턴: #### [제목] 뒤에 오는 [원문 링크](URL) 추출
+    # 실제 소스 구조: #### [제목]\n[원문 링크](URL)
+    pattern = r'#### \[(.*?)\]\s*\n\s*\[.*?\]\((.*?)\)'
+    return re.findall(pattern, text)
 
 def send_to_slack():
     res = requests.get(API_URL)
@@ -22,39 +26,37 @@ def send_to_slack():
     target_file = next((f for f in files if today_str in f['name']), None)
 
     if target_file:
-        # Raw 데이터를 가져와서 분석
+        # 1. 파일의 Raw 텍스트 가져오기
         content_res = requests.get(target_file['download_url'])
         full_text = content_res.text
         
-        news_items = parse_news_content(full_text)
+        # 2. 기사 단위로 파싱
+        articles = parse_articles(full_text)
         
-        if not news_items:
-            # 패턴 매칭 실패 시 안내
-            requests.post(WEBHOOK_URL, json={"text": f"⚠️ 구조 분석 실패. 직접 확인: {target_file['html_url']}"})
-            return
-
-        # 슬랙 메시지 구성
-        attachments = []
-        for title, link in news_items:
-            # 제목에 포함된 마크다운 링크 기호([, ]) 제거 및 깔끔하게 정리
-            clean_title = re.sub(r'[\[\]]', '', title).strip()
+        if not articles:
+            # 파싱 실패 시 예비책 (전체 링크 전송)
+            payload = {"text": f"📢 오늘 기사 구조가 평소와 다릅니다. 직접 확인하세요: {target_file['html_url']}"}
+        else:
+            # 3. 슬랙 메시지 구성 (기사별 첨부)
+            attachments = []
+            for title, link in articles:
+                attachments.append({
+                    "color": "#2EB67D", # 슬랙 초록색
+                    "title": title.strip(),
+                    "title_link": link.strip(),
+                    "text": "기사 원문 읽기 ↗️"
+                })
             
-            attachments.append({
-                "color": "#00C73C",
-                "title": clean_title,
-                "title_link": link.strip(),
-                "fallback": clean_title
-            })
-
-        # 한 번에 보낼 수 있는 attachment 개수 제한(보통 20개)을 고려해 전송
-        payload = {
-            "text": f"🚀 *{today_str} 오늘의 주요 AI 뉴스 (기사별 요약)*",
-            "attachments": attachments[:20] 
-        }
+            payload = {
+                "text": f"🚀 *오늘의 AI 뉴스레터: 주요 기사 요약 ({today_str})*",
+                "attachments": attachments[:20] # 슬랙 제한을 고려해 최대 20개
+            }
         
+        # 4. 슬랙 전송
         requests.post(WEBHOOK_URL, json=payload)
+        print(f"{len(articles)}개의 기사를 전송했습니다.")
     else:
-        print(f"{today_str} 날짜의 파일을 찾지 못했습니다.")
+        print(f"{today_str} 날짜의 뉴스가 아직 없습니다.")
 
 if __name__ == "__main__":
     send_to_slack()
