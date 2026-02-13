@@ -20,32 +20,43 @@ def send_to_slack():
         content_res = requests.get(target_file['download_url'])
         full_text = content_res.text
         
-        # 1. 기사 제목과 링크를 찾는 가장 확실한 방법 (정규표현식)
-        # #### [제목] ... [원문 링크](URL) 구조를 찾습니다.
-        pattern = r'#### \[(.*?)\][\s\S]*?\[원문 링크\]\((https?://.*?)\)'
-        articles = re.findall(pattern, full_text)
+        # 1. 기사 단위로 쪼개기 (#### 기준)
+        sections = full_text.split('#### ')
+        articles = []
 
-        if not articles:
-            # 혹시 위 패턴이 실패할 경우를 대비한 두 번째 패턴 (제목의 링크 추출)
-            pattern2 = r'#### \[(.*?)\]\((https?://.*?)\)'
-            articles = re.findall(pattern2, full_text)
-
-        if articles:
-            # 상단에 오늘 뉴스 시작 알림 한 번
-            requests.post(WEBHOOK_URL, json={"text": f"📅 *{today_str} AI 뉴스 배달 시작*"})
+        for section in sections[1:]: # 첫 섹션은 제목이므로 제외
+            lines = section.split('\n')
+            if not lines: continue
             
-            # 2. 기사 하나당 메시지 한 개씩 전송 (사용자님이 말씀하신 루프 부분)
-            for title, link in articles[:10]: # 너무 많으면 도배되니 일단 10개만
-                payload = {
-                    "text": f"▶️ *{title.strip()}*\n{link.strip()}"
+            # 첫 줄에서 [제목] 추출
+            title_match = re.search(r'\[(.*?)\]', lines[0])
+            title = title_match.group(1) if title_match else lines[0][:50]
+            
+            # 섹션 전체에서 http로 시작하는 링크 추출
+            link_match = re.search(r'(https?://[^\s\)]+)', section)
+            link = link_match.group(1) if link_match else None
+            
+            if title and link:
+                articles.append((title.strip(), link.strip()))
+
+        # 2. 기사 전송 (뭉텅이 방지: 루프 안에서 각각 전송)
+        if articles:
+            # 시작 알림
+            requests.post(WEBHOOK_URL, json={"text": f"📅 *{today_str} AI 뉴스 배달을 시작합니다! (총 {len(articles)}건)*"})
+            time.sleep(1)
+
+            for title, link in articles[:15]: # 도배 방지를 위해 상위 15개만
+                # 기사 하나씩 개별 메시지로 쏩니다
+                message = {
+                    "text": f"📍 *{title}*\n<{link}|원문 기사 읽기 ↗️>"
                 }
-                requests.post(WEBHOOK_URL, json=payload)
-                time.sleep(1) # 슬랙 과부하 방지를 위해 1초 간격
+                requests.post(WEBHOOK_URL, json=message)
+                time.sleep(1.5) # 슬랙 서버를 위해 1.5초 간격 유지
         else:
-            # 파싱이 아예 실패했을 때만 링크 전송
-            requests.post(WEBHOOK_URL, json={"text": f"⚠️ 기사 분석 실패. 직접 확인: {target_file['html_url']}"})
+            # 여기까지 왔는데 articles가 비어있다면 진짜 구조가 바뀐 것
+            requests.post(WEBHOOK_URL, json={"text": f"❌ 기사를 추출하지 못했습니다. 확인용 링크: {target_file['html_url']}"})
     else:
-        print("오늘자 뉴스 파일이 없습니다.")
+        print("오늘자 뉴스가 아직 올라오지 않았습니다.")
 
 if __name__ == "__main__":
     send_to_slack()
