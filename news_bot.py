@@ -22,15 +22,16 @@ def send_to_slack():
         print("파일 없음")
         return
 
-    # 원문 텍스트 가져오기
+    # md 파일 원문 가져오기
     raw_text = requests.get(target_file['download_url']).text
     
     # #### 를 기준으로 텍스트를 강제로 자름 (파싱의 핵심)
     sections = raw_text.split('#### ')
     count = 0
 
-    # 시작 알림
-    requests.post(WEBHOOK_URL, json={"text": f"🚀 *{today_str} 뉴스 배달 시작*"})
+    # [중요] 이 문구가 슬랙에 보이면 새 코드가 실행된 것입니다!
+    requests.post(WEBHOOK_URL, json={"text": f"🔥 *{today_str} 기사 단위 배달 테스트 시작!*"})
+    time.sleep(1)
 
     for section in sections[1:]:
         # 제목: [ ] 사이의 글자 추출
@@ -42,7 +43,7 @@ def send_to_slack():
             title = title_match.group(1).strip()
             url = url_match.group(1).strip()
             
-            # Rich Format 구성 (뭉텅이 링크 코드는 여기에 없음)
+            # Rich Format 구성 (버튼 형태)
             payload = {
                 "blocks": [
                     {
@@ -54,23 +55,22 @@ def send_to_slack():
                         "elements": [
                             {
                                 "type": "button",
-                                "text": { "type": "plain_text", "text": "원문 읽기" },
+                                "text": { "type": "plain_text", "text": "기사 읽기 ↗️" },
                                 "url": url,
                                 "style": "primary"
                             }
                         ]
-                    }
+                    },
+                    { "type": "divider" }
                 ]
             }
-            # 개별 전송
+            # [개별 전송] 루프 안에서 하나씩 쏩니다
             requests.post(WEBHOOK_URL, json=payload)
             count += 1
             time.sleep(1.5)
 
-    # 만약 기사를 하나도 못 찾았다면, 예전처럼 링크를 보내는 게 아니라 
-    # 아래 에러 메시지가 슬랙에 찍히게 됩니다.
     if count == 0:
-        requests.post(WEBHOOK_URL, json={"text": "❌ 파싱 에러: 기사를 하나도 추출하지 못했습니다. 형식을 확인하세요."})
+        requests.post(WEBHOOK_URL, json={"text": "❌ 기사를 하나도 찾지 못했습니다. 파일 구조를 확인해 주세요."})
 
 if __name__ == "__main__":
     send_to_slack()
