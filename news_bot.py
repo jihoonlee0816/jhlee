@@ -2,35 +2,11 @@ import requests
 import os
 import re
 from datetime import datetime
+import time
 
-# 설정
 TARGET_REPO = "GENEXIS-AI/DailyNews"
 API_URL = f"https://api.github.com/repos/{TARGET_REPO}/contents/%EB%89%B4%EC%8A%A4%EB%A0%88%ED%84%B0"
 WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
-
-def parse_articles(text):
-    """
-    마크다운 텍스트에서 '#### [제목]'과 그 안에 있는 '링크'를 
-    줄바꿈에 상관없이 유연하게 찾아냅니다.
-    """
-    articles = []
-    # #### [기사 제목] 단위로 텍스트를 자릅니다.
-    chunks = text.split('#### [')
-    
-    for chunk in chunks[1:]:  # 첫 번째 조각은 서론이므로 제외
-        try:
-            # 1. 제목 추출 (']' 앞까지)
-            title = chunk.split(']')[0].strip()
-            
-            # 2. 링크 추출 (괄호 안의 http로 시작하는 문자열 찾기)
-            url_match = re.search(r'\((https?://[^\)]+)\)', chunk)
-            if url_match:
-                link = url_match.group(1).strip()
-                articles.append({"title": title, "link": link})
-        except Exception:
-            continue
-            
-    return articles
 
 def send_to_slack():
     res = requests.get(API_URL)
@@ -44,34 +20,32 @@ def send_to_slack():
         content_res = requests.get(target_file['download_url'])
         full_text = content_res.text
         
-        # 기사 파싱
-        news_list = parse_articles(full_text)
-        
-        if news_list:
-            attachments = []
-            # 최대 15개 기사까지만 발송 (슬랙 메시지 용량 제한 방지)
-            for item in news_list[:15]:
-                attachments.append({
-                    "color": "#2EB67D", # GeekNews 스타일 초록색
-                    "title": item['title'],
-                    "title_link": item['link'],
-                    "text": f"🔗 원문 보기: {item['link']}"
-                })
+        # 1. 기사 제목과 링크를 찾는 가장 확실한 방법 (정규표현식)
+        # #### [제목] ... [원문 링크](URL) 구조를 찾습니다.
+        pattern = r'#### \[(.*?)\][\s\S]*?\[원문 링크\]\((https?://.*?)\)'
+        articles = re.findall(pattern, full_text)
+
+        if not articles:
+            # 혹시 위 패턴이 실패할 경우를 대비한 두 번째 패턴 (제목의 링크 추출)
+            pattern2 = r'#### \[(.*?)\]\((https?://.*?)\)'
+            articles = re.findall(pattern2, full_text)
+
+        if articles:
+            # 상단에 오늘 뉴스 시작 알림 한 번
+            requests.post(WEBHOOK_URL, json={"text": f"📅 *{today_str} AI 뉴스 배달 시작*"})
             
-            payload = {
-                "text": f"📢 *{today_str} 오늘의 AI 뉴스레터 도착 (기사별 요약)*",
-                "attachments": attachments
-            }
-            
-            # 슬랙 전송
-            response = requests.post(WEBHOOK_URL, json=payload)
-            if response.status_code == 200:
-                print(f"성공적으로 {len(news_list)}개의 기사를 보냈습니다.")
+            # 2. 기사 하나당 메시지 한 개씩 전송 (사용자님이 말씀하신 루프 부분)
+            for title, link in articles[:10]: # 너무 많으면 도배되니 일단 10개만
+                payload = {
+                    "text": f"▶️ *{title.strip()}*\n{link.strip()}"
+                }
+                requests.post(WEBHOOK_URL, json=payload)
+                time.sleep(1) # 슬랙 과부하 방지를 위해 1초 간격
         else:
-            # 파싱 실패 시 알림
-            requests.post(WEBHOOK_URL, json={"text": f"⚠️ 기사 파싱에 실패했습니다. 링크를 확인해 주세요: {target_file['html_url']}"})
+            # 파싱이 아예 실패했을 때만 링크 전송
+            requests.post(WEBHOOK_URL, json={"text": f"⚠️ 기사 분석 실패. 직접 확인: {target_file['html_url']}"})
     else:
-        print(f"{today_str} 날짜의 파일이 아직 없습니다.")
+        print("오늘자 뉴스 파일이 없습니다.")
 
 if __name__ == "__main__":
     send_to_slack()
