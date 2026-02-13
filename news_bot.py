@@ -22,55 +22,59 @@ def send_to_slack():
         print("파일 없음")
         return
 
-    # md 파일 원문 가져오기
+    # md 파일 원문(Raw) 가져오기
     raw_text = requests.get(target_file['download_url']).text
     
-    # #### 를 기준으로 텍스트를 강제로 자름 (파싱의 핵심)
-    sections = raw_text.split('#### ')
-    count = 0
-
-    # [중요] 이 문구가 슬랙에 보이면 새 코드가 실행된 것입니다!
-    requests.post(WEBHOOK_URL, json={"text": f"🔥 *{today_str} 기사 단위 배달 테스트 시작!*"})
+    # [시작 알림] 이 문구가 보이면 새 코드가 실행된 겁니다.
+    requests.post(WEBHOOK_URL, json={"text": f"🔥 *{today_str} 기사 단위 배달 시작! (파싱 로직 대폭 강화)*"})
     time.sleep(1)
 
-    for section in sections[1:]:
-        # 제목: [ ] 사이의 글자 추출
-        title_match = re.search(r'\[(.*?)\]', section)
-        # 링크: http로 시작하는 URL 추출
-        url_match = re.search(r'(https?://[^\s\)\>\]]+)', section)
-        
-        if title_match and url_match:
-            title = title_match.group(1).strip()
-            url = url_match.group(1).strip()
+    # [핵심 로직] '###' 또는 '####'로 시작하는 모든 기사 섹션을 쪼갭니다.
+    sections = re.split(r'#{3,5}\s*', raw_text)
+    count = 0
+
+    for section in sections[1:]: # 첫 섹션 제외
+        try:
+            # 1. 제목: 첫 번째로 나타나는 [ ] 사이의 글자 무조건 추출
+            title_match = re.search(r'\[(.*?)\]', section)
+            # 2. 링크: http로 시작하는 첫 번째 URL 무조건 추출
+            url_match = re.search(r'(https?://[^\s\)\>\]]+)', section)
             
-            # Rich Format 구성 (버튼 형태)
-            payload = {
-                "blocks": [
-                    {
-                        "type": "section",
-                        "text": { "type": "mrkdwn", "text": f"*📍 {title}*" }
-                    },
-                    {
-                        "type": "actions",
-                        "elements": [
-                            {
-                                "type": "button",
-                                "text": { "type": "plain_text", "text": "기사 읽기 ↗️" },
-                                "url": url,
-                                "style": "primary"
-                            }
-                        ]
-                    },
-                    { "type": "divider" }
-                ]
-            }
-            # [개별 전송] 루프 안에서 하나씩 쏩니다
-            requests.post(WEBHOOK_URL, json=payload)
-            count += 1
-            time.sleep(1.5)
+            if title_match and url_match:
+                title = title_match.group(1).strip()
+                url = url_match.group(1).strip().replace(')', '').replace('>', '')
+                
+                # 기사 하나당 Rich Format 메시지 하나씩 개별 전송
+                payload = {
+                    "blocks": [
+                        {
+                            "type": "section",
+                            "text": { "type": "mrkdwn", "text": f"*📍 {title}*" }
+                        },
+                        {
+                            "type": "actions",
+                            "elements": [
+                                {
+                                    "type": "button",
+                                    "text": { "type": "plain_text", "text": "원문 읽기 ↗️" },
+                                    "url": url,
+                                    "style": "primary"
+                                }
+                            ]
+                        },
+                        { "type": "divider" }
+                    ]
+                }
+                requests.post(WEBHOOK_URL, json=payload)
+                count += 1
+                time.sleep(1.2)
+        except:
+            continue
 
     if count == 0:
-        requests.post(WEBHOOK_URL, json={"text": "❌ 기사를 하나도 찾지 못했습니다. 파일 구조를 확인해 주세요."})
+        # 기사를 하나도 못 찾았다면 텍스트 샘플을 슬랙으로 보내 확인
+        sample = raw_text[:150].replace('`', '')
+        requests.post(WEBHOOK_URL, json={"text": f"❌ 기사 추출 실패. 파일 샘플:\n```{sample}```"})
 
 if __name__ == "__main__":
     send_to_slack()
