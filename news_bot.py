@@ -6,7 +6,7 @@ import time
 
 # 1. 설정
 TARGET_REPO = "GENEXIS-AI/DailyNews"
-FOLDER_PATH = "뉴스레터" # 인코딩은 API가 알아서 처리하도록 단순화
+FOLDER_PATH = "뉴스레터"
 API_URL = f"https://api.github.com/repos/{TARGET_REPO}/contents/{FOLDER_PATH}"
 WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
@@ -19,36 +19,50 @@ def send_to_slack():
     if not target_file: return
 
     raw_text = requests.get(target_file['download_url']).text
+    full_newsletter_url = target_file['html_url'] # 전체 뉴스레터 링크
     
-    # 시작 알림 전송
-    requests.post(WEBHOOK_URL, json={"text": f"🚀 *{today_str} 기사 배달 최종 시도 (파싱 로직 완전 개편)*"})
+    # [1. 시작 알림] 전체 뉴스레터 링크 포함
+    requests.post(WEBHOOK_URL, json={
+        "text": f"🚀 *{today_str} AI 뉴스 배달 시작!* \n👉 <{full_newsletter_url}|전체 뉴스레터 원문 보기>"
+    })
     time.sleep(1)
 
-    # [로직 강화] 모든 이미지 태그 제거 (인스타그램 등 노이즈 제거)
+    # 본문 전처리 (이미지 태그 제거)
     clean_text = re.sub(r'!\[.*?\]\(.*?\)', '', raw_text)
     
-    # [로직 강화] # 이 1개 이상 나오는 모든 행을 기사 시작점으로 인식 (샵 개수 상관없음)
+    # 샵(#) 개수에 상관없이 섹션 분리
     sections = re.split(r'\n#+\s*', clean_text)
     count = 0
 
     for section in sections:
         if not section.strip(): continue
         
-        # 첫 줄을 제목으로 인식
-        lines = section.strip().split('\n')
-        raw_title = lines[0].strip()
-        # 제목에서 마크다운 특수문자([], (), #, *) 싹 제거
+        lines = [l.strip() for l in section.strip().split('\n') if l.strip()]
+        if not lines: continue
+        
+        # 1. 제목 추출
+        raw_title = lines[0]
         clean_title = re.sub(r'[\[\]\(\)\*#]', '', raw_title).strip()
         
-        # 해당 섹션 내에서 첫 번째 http URL 찾기
+        # 2. 링크 및 요약 추출
         url_match = re.search(r'(https?://[^\s\)\>\]]+)', section)
-        
-        # 유효성 검사: 제목이 존재하고 URL이 인스타그램이 아닐 때만 전송
         if url_match and len(clean_title) > 2:
             url = url_match.group(1).strip()
             if "instagram" in url or "cdn" in url: continue
             
-            # 슬랙 Rich Format 전송
+            # 요약: 제목과 링크를 제외한 나머지 텍스트들을 합침
+            summary_content = ""
+            for line in lines[1:]:
+                # 링크가 포함된 줄은 제외하고 텍스트만 수집
+                if url not in line and "![" not in line:
+                    clean_line = re.sub(r'[\[\]\(\)\*#]', '', line).strip()
+                    if clean_line:
+                        summary_content += clean_line + " "
+            
+            # 요약 내용이 너무 길면 자름 (최대 200자)
+            summary = (summary_content[:200] + '...') if len(summary_content) > 200 else summary_content
+
+            # [2. 기사별 Rich Format 전송] 요약(text) 필드 추가
             payload = {
                 "blocks": [
                     {
@@ -56,11 +70,15 @@ def send_to_slack():
                         "text": { "type": "mrkdwn", "text": f"*📍 {clean_title}*" }
                     },
                     {
+                        "type": "section",
+                        "text": { "type": "mrkdwn", "text": f"> {summary if summary else '내용은 원문 링크를 확인해 주세요.'}" }
+                    },
+                    {
                         "type": "actions",
                         "elements": [
                             {
                                 "type": "button",
-                                "text": { "type": "plain_text", "text": "원문 읽기 ↗️" },
+                                "text": { "type": "plain_text", "text": "기사 원문 읽기 ↗️" },
                                 "url": url,
                                 "style": "primary"
                             }
@@ -71,10 +89,10 @@ def send_to_slack():
             }
             requests.post(WEBHOOK_URL, json=payload)
             count += 1
-            time.sleep(1.2) # 슬랙 서버 보호를 위한 딜레이
+            time.sleep(1.2)
 
     if count == 0:
-        requests.post(WEBHOOK_URL, json={"text": "❌ 여전히 기사를 찾지 못했습니다. 수동 확인이 필요합니다."})
+        requests.post(WEBHOOK_URL, json={"text": "❌ 기사 추출에 실패했습니다."})
 
 if __name__ == "__main__":
     send_to_slack()
