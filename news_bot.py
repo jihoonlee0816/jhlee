@@ -6,50 +6,49 @@ import time
 
 # 1. 설정
 TARGET_REPO = "GENEXIS-AI/DailyNews"
-FOLDER_PATH = "%EB%89%B4%EC%8A%A4%EB%A0%88%ED%84%B0" 
+FOLDER_PATH = "뉴스레터" # 인코딩은 API가 알아서 처리하도록 단순화
 API_URL = f"https://api.github.com/repos/{TARGET_REPO}/contents/{FOLDER_PATH}"
 WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
 def send_to_slack():
     res = requests.get(API_URL)
     if res.status_code != 200: return
-
     files = res.json()
     today_str = datetime.now().strftime("%Y-%m-%d")
     target_file = next((f for f in files if today_str in f['name']), None)
-
     if not target_file: return
 
     raw_text = requests.get(target_file['download_url']).text
     
-    # [시작 알림]
-    requests.post(WEBHOOK_URL, json={"text": f"✅ *{today_str} 기사 배달을 다시 시도합니다!*" })
+    # 시작 알림 전송
+    requests.post(WEBHOOK_URL, json={"text": f"🚀 *{today_str} 기사 배달 최종 시도 (파싱 로직 완전 개편)*"})
     time.sleep(1)
 
-    # 파싱 로직: '####'로 기사 섹션을 쪼갭니다.
-    sections = raw_text.split('####')
+    # [로직 강화] 모든 이미지 태그 제거 (인스타그램 등 노이즈 제거)
+    clean_text = re.sub(r'!\[.*?\]\(.*?\)', '', raw_text)
+    
+    # [로직 강화] # 이 1개 이상 나오는 모든 행을 기사 시작점으로 인식 (샵 개수 상관없음)
+    sections = re.split(r'\n#+\s*', clean_text)
     count = 0
 
-    for section in sections[1:]: # 헤더 부분 제외
+    for section in sections:
+        if not section.strip(): continue
+        
+        # 첫 줄을 제목으로 인식
         lines = section.strip().split('\n')
-        if not lines: continue
-        
-        # 1. 제목: #### 바로 뒤에 오는 첫 번째 줄 (대괄호가 있어도 없어도 내용만 추출)
         raw_title = lines[0].strip()
-        # 제목에서 [, ], (, ) 같은 마크다운 기호 제거
-        clean_title = re.sub(r'[\[\]\(\)]', '', raw_title)
+        # 제목에서 마크다운 특수문자([], (), #, *) 싹 제거
+        clean_title = re.sub(r'[\[\]\(\)\*#]', '', raw_title).strip()
         
-        # 2. 링크: 해당 섹션 안에서 http로 시작하는 첫 번째 URL 추출
+        # 해당 섹션 내에서 첫 번째 http URL 찾기
         url_match = re.search(r'(https?://[^\s\)\>\]]+)', section)
         
-        if clean_title and url_match:
+        # 유효성 검사: 제목이 존재하고 URL이 인스타그램이 아닐 때만 전송
+        if url_match and len(clean_title) > 2:
             url = url_match.group(1).strip()
+            if "instagram" in url or "cdn" in url: continue
             
-            # 배너 이미지 등 기사가 아닌 것은 제외
-            if "instagram" in url or "cdninstagram" in url or "Image" in clean_title:
-                continue
-            
-            # 슬랙 Rich Format (Block Kit)
+            # 슬랙 Rich Format 전송
             payload = {
                 "blocks": [
                     {
@@ -72,11 +71,10 @@ def send_to_slack():
             }
             requests.post(WEBHOOK_URL, json=payload)
             count += 1
-            time.sleep(1.2)
+            time.sleep(1.2) # 슬랙 서버 보호를 위한 딜레이
 
     if count == 0:
-        # 그래도 실패하면 원문 전체를 아주 짧게 보여줌
-        requests.post(WEBHOOK_URL, json={"text": f"❌ 기사 인식 실패. 구조를 다시 분석해야 합니다.\n내용 앞부분: {raw_text[:100]}"})
+        requests.post(WEBHOOK_URL, json={"text": "❌ 여전히 기사를 찾지 못했습니다. 수동 확인이 필요합니다."})
 
 if __name__ == "__main__":
     send_to_slack()
