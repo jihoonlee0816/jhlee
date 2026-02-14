@@ -2,8 +2,9 @@ name: Run Daily News Bot
 
 on:
   schedule:
-    # 한국 시간(KST) 오전 10시 = UTC 오전 1시
-    - cron: '0 1 * * *'
+    # 한국 시간(KST) 오전 10시 17분 = UTC 오전 1시 17분
+    # 정각을 피해서 설정하면 GitHub 서버의 지연 시간을 줄일 수 있습니다.
+    - cron: '17 1 * * *'
   workflow_dispatch: # 수동 실행 버튼 유지
 
 jobs:
@@ -15,7 +16,6 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up Python
-        # 이 부분이 수정되었습니다 (actions로 변경)
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
