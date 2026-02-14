@@ -21,24 +21,28 @@ def send_to_slack():
     raw_text = requests.get(target_file['download_url']).text
     full_newsletter_url = target_file['html_url']
     
-    # 시작 알림
+    # [시작 알림]
     requests.post(WEBHOOK_URL, json={
-        "text": f"🚀 *{today_str} AI 뉴스 배달 시작!* \n👉 <{full_newsletter_url}|전체 뉴스레터 원문 보기>"
+        "text": f"🚀 *{today_str} AI 뉴스 배달 시작! (이미지 매칭 수정 완료)* \n👉 <{full_newsletter_url}|전체 뉴스레터 원문 보기>"
     })
     time.sleep(1)
 
-    # 섹션 분리 (샵 개수 무관)
+    # 샵(#)을 기준으로 섹션 분리
     sections = re.split(r'\n#+\s*', raw_text)
-    count = 0
+    
+    # 이미지가 제목 위에 있으므로, 이전 섹션에서 찾은 이미지를 다음 기사에 사용합니다.
+    pending_image = None
+    
+    # 첫 번째 섹션(헤더)에서 이미지 미리 찾기 (첫 기사용)
+    first_img = re.search(r'!\[.*?\]\((.*?)\)', sections[0])
+    if first_img:
+        pending_image = first_img.group(1)
 
-    for section in sections:
-        if not section.strip(): continue
+    count = 0
+    for i in range(1, len(sections)):
+        section = sections[i]
         
-        # 1. 이미지 추출 (![alt](url) 형태 찾기)
-        img_match = re.search(r'!\[.*?\]\((.*?)\)', section)
-        img_url = img_match.group(1) if img_match else None
-        
-        # 기사 내용에서 이미지 태그 제거 (텍스트만 남기기 위함)
+        # 1. 현재 섹션에서 텍스트 추출 (이미지 태그 제거)
         section_clean = re.sub(r'!\[.*?\]\(.*?\)', '', section)
         valid_lines = [l.strip() for l in section_clean.strip().split('\n') if l.strip()]
         if not valid_lines: continue
@@ -53,11 +57,7 @@ def send_to_slack():
         
         if clean_title and url_match:
             url = url_match.group(1).strip()
-            # 썸네일로 부적합한 주소 필터링
-            if any(x in url for x in ["instagram.com", "cdninstagram.com"]): url_check = False
-            else: url_check = True
-            
-            if not url_check: continue
+            if any(x in url for x in ["instagram.com", "cdninstagram.com"]): continue
 
             # 4. 요약 추출
             summary_lines = []
@@ -69,40 +69,36 @@ def send_to_slack():
             summary = " ".join(summary_lines)
             summary = (summary[:250] + '...') if len(summary) > 250 else summary
 
-            # 슬랙 메시지 블록 구성
-            blocks = []
+            # [핵심] 현재 기사에 pending_image(이전 섹션에서 찾은 것)를 할당
+            current_image = pending_image
             
-            # 이미지가 있다면 상단에 추가
-            if img_url:
-                blocks.append({
-                    "type": "image",
-                    "image_url": img_url,
-                    "alt_text": "기사 이미지"
-                })
+            # [핵심] 다음 기사를 위해 현재 섹션의 마지막 이미지를 저장
+            next_img_match = re.search(r'!\[.*?\]\((.*?)\)', section)
+            pending_image = next_img_match.group(1) if next_img_match else None
 
-            # 제목 추가
+            # 슬랙 블록 구성
+            blocks = []
+            if current_image:
+                blocks.append({"type": "image", "image_url": current_image, "alt_text": "기사 이미지"})
+            
             blocks.append({
                 "type": "section",
                 "text": { "type": "mrkdwn", "text": f"*📍 {clean_title}*" }
             })
-
-            # 요약 추가
+            
             blocks.append({
                 "type": "section",
                 "text": { "type": "mrkdwn", "text": f"> {summary if summary else '내용은 원문 읽기 버튼을 확인해 주세요.'}" }
             })
 
-            # 버튼 추가
             blocks.append({
                 "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": { "type": "plain_text", "text": "기사 원문 읽기 ↗️" },
-                        "url": url,
-                        "style": "primary"
-                    }
-                ]
+                "elements": [{
+                    "type": "button",
+                    "text": { "type": "plain_text", "text": "기사 원문 읽기 ↗️" },
+                    "url": url,
+                    "style": "primary"
+                }]
             })
             blocks.append({ "type": "divider" })
 
