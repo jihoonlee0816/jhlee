@@ -21,7 +21,7 @@ def send_to_slack():
     raw_text = requests.get(target_file['download_url']).text
     full_newsletter_url = target_file['html_url']
     
-    # [수정] 시작 알림 문구 정리
+    # [정리] 시작 알림: 깔끔한 문구로 변경
     requests.post(WEBHOOK_URL, json={
         "text": f"🚀 *{today_str} AI 뉴스 배달 시작!* \n👉 <{full_newsletter_url}|전체 뉴스레터 원문 보기>"
     })
@@ -30,6 +30,7 @@ def send_to_slack():
     sections = re.split(r'\n#+\s*', raw_text)
     pending_image = None
     
+    # 헤더 섹션에서 첫 번째 이미지 미리 찾기
     first_img = re.search(r'!\[.*?\]\((.*?)\)', sections[0])
     if first_img:
         pending_image = first_img.group(1)
@@ -38,21 +39,17 @@ def send_to_slack():
     for i in range(1, len(sections)):
         section = sections[i]
         
+        # 텍스트 추출 (이미지 태그 제거)
         text_only_section = re.sub(r'!\[.*?\]\(.*?\)', '', section).strip()
         lines = [l.strip() for l in text_only_section.split('\n') if l.strip()]
         
         if not lines: continue
         
-        # 1. 제목 추출 및 청소
+        # 1. 제목 추출 및 "제목:" 중복 제거
         raw_title = lines[0]
         bracket_title = re.search(r'\[(.*?)\]', raw_title)
-        if bracket_title:
-            clean_title = bracket_title.group(1)
-        else:
-            clean_title = raw_title
-        
-        # [핵심 수정] 제목 앞에 붙은 "제목:" 또는 "제목 :" 이라는 텍스트 강제 제거
-        clean_title = re.sub(r'^제목\s*:\s*', '', clean_title)
+        clean_title = bracket_title.group(1) if bracket_title else raw_title
+        clean_title = re.sub(r'^제목\s*:\s*', '', clean_title) # "제목:" 필터링
         clean_title = re.sub(r'[#\*]', '', clean_title).strip()
         
         # 2. 링크 추출
@@ -62,17 +59,22 @@ def send_to_slack():
             url = url_match.group(1).strip()
             if any(x in url for x in ["instagram.com", "cdninstagram.com"]): continue
 
-            # 3. 요약 추출 (제목으로 쓴 줄은 제외)
-            summary_lines = []
+            # 3. 본문 전체 추출 (요약하지 않음)
+            content_lines = []
             for line in lines[1:]:
-                if url not in line:
-                    c_line = re.sub(r'[\[\]\(\)\*#]', '', line).strip()
-                    if c_line: summary_lines.append(c_line)
+                # URL만 있는 줄은 버튼이 대신하므로 제외, 나머지는 모두 포함
+                if url not in line or len(line) > len(url) + 5:
+                    c_line = re.sub(r'[#\*]', '', line).strip()
+                    if c_line: content_lines.append(c_line)
             
-            summary = " ".join(summary_lines)
-            summary = (summary[:250] + '...') if len(summary) > 250 else summary
+            # 모든 문장을 줄바꿈(\n)으로 합쳐서 원문 구조 유지
+            full_content = "\n".join(content_lines)
+            
+            # 슬랙 메시지 글자 수 제한(3000자)을 위한 안전장치만 유지
+            if len(full_content) > 2900:
+                full_content = full_content[:2900] + "..."
 
-            # 이미지 매칭
+            # 이미지 매칭 로직
             current_image = pending_image
             next_img_match = re.search(r'!\[.*?\]\((.*?)\)', section)
             pending_image = next_img_match.group(1) if next_img_match else None
@@ -89,7 +91,7 @@ def send_to_slack():
             
             blocks.append({
                 "type": "section",
-                "text": { "type": "mrkdwn", "text": f"> {summary if summary else '원문 링크를 확인해 주세요.'}" }
+                "text": { "type": "mrkdwn", "text": f"{full_content if full_content else '본문 내용은 아래 버튼을 통해 확인해 주세요.'}" }
             })
 
             blocks.append({
