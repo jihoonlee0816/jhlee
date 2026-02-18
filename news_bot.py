@@ -20,51 +20,51 @@ def send_to_slack():
 
     raw_text = requests.get(target_file['download_url']).text
     
-    # [시작 알림]
     requests.post(WEBHOOK_URL, json={"text": f"🚀 *{today_str} AI 뉴스 배달 시작!*"})
     time.sleep(1)
 
-    # [핵심 수정] 기사 분리 기준 강화: # 또는 --- 또는 "제목:" 단어를 기준으로 나눔
-    sections = re.split(r'\n#+\s*|\n-{3,}\s*|\n(?=제목:)', raw_text)
+    # [핵심] 기사 분리: 가로줄(---)이나 샵(#)을 기준으로 나눔
+    sections = re.split(r'\n-{3,}\s*|\n#+\s*', raw_text)
     
-    pending_image = None
-
     for section in sections:
         if not section.strip(): continue
         
-        # 1. 이미지 미리 추출 (섹션 내 어디든)
-        img_match = re.search(r'!\[.*?\]\((.*?)\)', section)
-        current_image = pending_image # 이전 섹션의 이미지를 현재 기사에 사용
-        pending_image = img_match.group(1) if img_match else None
-
-        # 텍스트만 추출 (이미지 제거)
-        text_only = re.sub(r'!\[.*?\]\(.*?\)', '', section).strip()
-        lines = [l.strip() for l in text_only.split('\n') if l.strip()]
-        if not lines: continue
-
-        # 2. 제목 찾기: "제목:" 줄을 포함해 첫 3줄 안에서 진짜 제목 텍스트를 찾음
+        # 1. 이미지 추출 및 제거 (텍스트 분석을 위해)
+        images = re.findall(r'!\[.*?\]\((.*?)\)', section)
+        current_image = images[0] if images else None
+        
+        # 텍스트에서 모든 이미지 태그 제거
+        clean_text = re.sub(r'!\[.*?\]\(.*?\)', '', section).strip()
+        lines = [l.strip() for l in clean_text.split('\n') if l.strip()]
+        
+        # 2. 제목 찾기
         clean_title = ""
-        title_line_idx = -1
-        for idx, line in enumerate(lines[:3]):
-            # 군더더기 제거
+        content_start_idx = 0
+        
+        for idx, line in enumerate(lines):
+            # '제목:', '전체링크:', '중요도:' 등 불필요한 태그 제거 및 순수 텍스트 추출
             t = re.sub(r'^\*?\*?제목\s*:\s*\*?\*?|[#\*\[\]]', '', line).strip()
-            if t and len(t) > 2: # 의미 있는 길이의 텍스트 발견 시 제목으로 채택
+            
+            # '제목:' 이라는 글자만 있는 줄은 건너뛰고, 실제 제목이 있는 줄을 찾음
+            if t and len(t) > 2 and "http" not in t:
                 clean_title = t
-                title_line_idx = idx
+                content_start_idx = idx + 1
                 break
         
-        # 제목을 못 찾았거나 기사 링크가 없는 섹션은 건너뜀
-        url_match = re.search(r'(https?://[^\s\)\>\]]+)', text_only)
+        # 기사 링크 찾기
+        url_match = re.search(r'(https?://[^\s\)\>\]]+)', clean_text)
+        
+        # 제목과 링크가 모두 있어야 기사로 간주
         if not clean_title or not url_match:
             continue
 
-        # 3. 본문 추출 (제목 이후 ~ 중요도 이전까지)
         url = url_match.group(1).strip()
+
+        # 3. 본문 추출 (중요도 제외)
         content_lines = []
-        for line in lines[title_line_idx + 1:]:
-            # 중요도 제외 로직
-            if line.startswith("중요도") or line.startswith("**중요도"): continue
-            # 링크만 있는 줄 제외
+        for line in lines[content_start_idx:]:
+            # 중요도 제외 및 링크만 있는 줄 제외
+            if any(x in line for x in ["중요도", "전체링크"]): continue
             if url in line and len(line) < len(url) + 10: continue
             
             c_line = re.sub(r'[#\*]', '', line).strip()
@@ -72,7 +72,7 @@ def send_to_slack():
         
         full_content = "\n".join(content_lines)
 
-        # 슬랙 메시지 발송
+        # 슬랙 발송
         blocks = []
         if current_image:
             blocks.append({"type": "image", "image_url": current_image, "alt_text": "기사 이미지"})
@@ -100,7 +100,7 @@ def send_to_slack():
         blocks.append({ "type": "divider" })
 
         requests.post(WEBHOOK_URL, json={"blocks": blocks})
-        time.sleep(1.2) # 속도 조절
+        time.sleep(1.2)
 
 if __name__ == "__main__":
     send_to_slack()
