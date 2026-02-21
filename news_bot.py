@@ -1,7 +1,7 @@
 import requests
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta  # timedelta 추가됨
 import time
 
 # 1. 설정
@@ -14,9 +14,17 @@ def send_to_slack():
     res = requests.get(API_URL)
     if res.status_code != 200: return
     files = res.json()
-    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # [핵심 수정] 서버 시간(UTC)에 9시간을 더해 한국 시간(KST) 날짜를 만듭니다.
+    today_now = datetime.utcnow() + timedelta(hours=9)
+    today_str = today_now.strftime("%Y-%m-%d")
+    
     target_file = next((f for f in files if today_str in f['name']), None)
-    if not target_file: return
+    
+    # 만약 오늘 날짜 파일이 없으면 종료 (중복 배달 방지)
+    if not target_file: 
+        print(f"[{today_str}] 날짜의 파일을 아직 찾을 수 없습니다.")
+        return
 
     raw_text = requests.get(target_file['download_url']).text
     
@@ -36,29 +44,24 @@ def send_to_slack():
         
         if not lines: continue
 
-        # 1. 제목 찾기 로직 (진짜 텍스트가 나올 때까지)
+        # 1. 제목 찾기 로직
         clean_title = ""
         title_line_idx = -1
         
         for idx, line in enumerate(lines):
-            # '제목:', '중요도:', '전체링크:' 머릿말 제거
             t = re.sub(r'^\*?\*?제목\s*:\s*\*?\*?|[#\*\[\]]', '', line).strip()
-            
-            # 의미 있는 텍스트(제목) 발견 시 채택
             if t and len(t) > 2 and "http" not in t:
                 clean_title = t
                 title_line_idx = idx
                 break
         
         url_match = re.search(r'(https?://[^\s\)\>\]]+)', clean_text)
-        
-        # 기사가 아니라고 판단되면 건너뜀
         if not clean_title or not url_match:
             continue
 
         url = url_match.group(1).strip()
 
-        # 2. 본문 추출 (제목 이후 ~ 중요도 이전)
+        # 2. 본문 추출 (중요도 등 제외)
         content_lines = []
         for line in lines[title_line_idx + 1:]:
             if any(x in line for x in ["중요도", "전체링크", "전체 뉴스레터"]): continue
