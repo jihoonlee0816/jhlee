@@ -2,9 +2,8 @@ name: Run Daily News Bot
 
 on:
   schedule:
-    # 한국 시간(KST) 오전 8시 17분 = UTC 전날 오후 11시 17분
-    # 정각을 피해서 설정하여 지연을 최소화합니다.
-    - cron: '17 23 * * *'
+    # 한국 시간(KST) 오전 8시 05분 실행 (UTC 23:05)
+    - cron: '5 23 * * *'
   workflow_dispatch: # 수동 실행 버튼 유지
 
 jobs:
@@ -12,11 +11,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # @v3에서 @v4로 업데이트 (Node.js 관련 경고 해결)
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
+      # @v4에서 @v5로 업데이트 (설치 안정성 향상)
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
